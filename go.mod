@@ -1,4 +1,4 @@
-module github.com/runlit/cli
+module github.com/runlit-dev/cli
 
 go 1.26.1
 

@@ -21,7 +21,7 @@ THE SOFTWARE.
 */
 package main
 
-import "github.com/runlit/cli/cmd"
+import "github.com/runlit-dev/cli/cmd"
 
 func main() {
 	cmd.Execute()
