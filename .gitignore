@@ -1,0 +1,31 @@
+# Go build artifacts
+/bin/
+/dist/
+runlit
+runlit.exe
+*.test
+*.out
+
+# GoReleaser
+/dist/
+
+# Vendor
+/vendor/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Env
+.env
+.env.local
+*.env
+
+# Secrets
+*.pem
+*.key
+
+# Editor
+.idea/
+.vscode/
+*.swp
