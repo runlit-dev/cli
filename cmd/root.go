@@ -9,8 +9,9 @@ import (
 )
 
 var (
-	apiURL string
-	apiKey string
+	apiURL       string
+	apiKey       string
+	outputFormat string
 )
 
 var rootCmd = &cobra.Command{
@@ -38,4 +39,5 @@ func Execute() {
 func init() {
 	rootCmd.PersistentFlags().StringVar(&apiURL, "api-url", "https://api.runlit.dev", "runlit API base URL")
 	rootCmd.PersistentFlags().StringVar(&apiKey, "key", "", "runlit API key (or set RUNLIT_API_KEY)")
+	rootCmd.PersistentFlags().StringVar(&outputFormat, "format", "text", "Output format: text or json")
 }

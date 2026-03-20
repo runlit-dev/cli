@@ -69,7 +69,7 @@ Examples:
 
 		// Call runlit API
 		fmt.Fprintln(os.Stderr, "Running eval...")
-		result, err := callEvalAPI(apiURL, key, diff, prTitle, prBody, checkRepo, int64(prNumber))
+		result, err := callEvalAPI(apiURL, key, diff, prTitle, prBody, checkRepo, int64(prNumber), readRunlitYml())
 		if err != nil {
 			return fmt.Errorf("eval: %w", err)
 		}
@@ -140,6 +140,7 @@ type evalRequest struct {
 	PRDesc    string `json:"pr_description,omitempty"`
 	Repo      string `json:"repo,omitempty"`
 	PRNumber  int64  `json:"pr_number,omitempty"`
+	RunlitYml string `json:"runlit_yml,omitempty"`
 }
 
 type signalResult struct {
@@ -159,13 +160,24 @@ type evalResponse struct {
 	LatencyMs     int64        `json:"latency_ms"`
 }
 
-func callEvalAPI(baseURL, key, diff, title, desc, repo string, prNumber int64) (*evalResponse, error) {
+// readRunlitYml reads .runlit.yml from the current working directory.
+// Returns an empty string silently if the file doesn't exist.
+func readRunlitYml() string {
+	b, err := os.ReadFile(".runlit.yml")
+	if err != nil {
+		return ""
+	}
+	return string(b)
+}
+
+func callEvalAPI(baseURL, key, diff, title, desc, repo string, prNumber int64, runitlYml string) (*evalResponse, error) {
 	reqBody := evalRequest{
-		Diff:     diff,
-		PRTitle:  title,
-		PRDesc:   desc,
-		Repo:     repo,
-		PRNumber: prNumber,
+		Diff:      diff,
+		PRTitle:   title,
+		PRDesc:    desc,
+		Repo:      repo,
+		PRNumber:  prNumber,
+		RunlitYml: runitlYml,
 	}
 	payload, err := json.Marshal(reqBody)
 	if err != nil {
@@ -177,7 +189,7 @@ func callEvalAPI(baseURL, key, diff, title, desc, repo string, prNumber int64) (
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-API-Key", key)
+	req.Header.Set("Authorization", "Bearer "+key)
 
 	client := &http.Client{Timeout: 60 * time.Second}
 	resp, err := client.Do(req)
@@ -199,6 +211,12 @@ func callEvalAPI(baseURL, key, diff, title, desc, repo string, prNumber int64) (
 }
 
 func printEvalResult(r *evalResponse) {
+	if outputFormat == "json" {
+		out, _ := json.MarshalIndent(r, "", "  ")
+		fmt.Println(string(out))
+		return
+	}
+
 	gradeIcon := map[string]string{
 		"PASS":  "🟢",
 		"WARN":  "🟡",

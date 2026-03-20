@@ -55,7 +55,7 @@ Examples:
 		}
 
 		fmt.Fprintln(os.Stderr, "Running eval...")
-		result, err := callEvalAPI(apiURL, key, string(diff), title, desc, repo, prNumber)
+		result, err := callEvalAPI(apiURL, key, string(diff), title, desc, repo, prNumber, readRunlitYml())
 		if err != nil {
 			return fmt.Errorf("eval: %w", err)
 		}
