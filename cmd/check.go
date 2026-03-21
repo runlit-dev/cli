@@ -199,6 +199,18 @@ func callEvalAPI(baseURL, key, diff, title, desc, repo string, prNumber int64, r
 	defer resp.Body.Close()
 
 	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode == http.StatusTooManyRequests {
+		// Parse the detail field if available; otherwise use raw body.
+		var errBody struct {
+			Detail string `json:"detail"`
+		}
+		_ = json.Unmarshal(body, &errBody)
+		msg := errBody.Detail
+		if msg == "" {
+			msg = string(body)
+		}
+		return nil, fmt.Errorf("quota exceeded: %s\nUpgrade at https://app.runlit.dev/billing", msg)
+	}
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("API returned %d: %s", resp.StatusCode, string(body))
 	}
