@@ -26,9 +26,11 @@ var checkCmd = &cobra.Command{
 	Long: `Fetches the diff for a pull request from GitHub and runs a full eval.
 
 Requires a GitHub token with repo read access (GITHUB_TOKEN env var or --github-token flag).
+Use --verbose to see detailed findings (hallucinated APIs, security issues, etc.).
 
 Examples:
   runlit check --pr 42 --repo myorg/myrepo
+  runlit check --pr 7 --repo runlit-dev/api --verbose
   GITHUB_TOKEN=ghp_... runlit check --pr 7 --repo runlit-dev/api`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		prStr, _ := cmd.Flags().GetString("pr")
@@ -42,6 +44,8 @@ Examples:
 		if checkRepo == "" {
 			return fmt.Errorf("--repo is required (e.g. myorg/myrepo)")
 		}
+
+		verbose, _ := cmd.Flags().GetBool("verbose")
 
 		ghToken := checkGitHubToken
 		if ghToken == "" {
@@ -74,7 +78,14 @@ Examples:
 			return fmt.Errorf("eval: %w", err)
 		}
 
-		printEvalResult(result)
+		var detail *evalDetail
+		if verbose {
+			fmt.Fprintln(os.Stderr, "Fetching findings...")
+			time.Sleep(800 * time.Millisecond) // Wait for async DB write
+			detail, _ = fetchEvalDetail(apiURL, key, result.EvalID)
+		}
+
+		printEvalResult(result, detail)
 		return gradeExitCode(result.Grade)
 	},
 }
@@ -83,6 +94,7 @@ func init() {
 	checkCmd.Flags().String("pr", "", "Pull request number (required)")
 	checkCmd.Flags().StringVar(&checkRepo, "repo", "", "Repository full name e.g. myorg/myrepo (required)")
 	checkCmd.Flags().StringVar(&checkGitHubToken, "github-token", "", "GitHub personal access token (or GITHUB_TOKEN env)")
+	checkCmd.Flags().BoolP("verbose", "v", false, "Show detailed findings (hallucinated APIs, security issues, etc.)")
 	rootCmd.AddCommand(checkCmd)
 }
 
@@ -160,6 +172,78 @@ type evalResponse struct {
 	LatencyMs     int64        `json:"latency_ms"`
 }
 
+// ── Detailed findings (GET /v1/evals/{id}) ──────────────────────────────────
+
+type hallucinatedAPI struct {
+	APIRef     string  `json:"api_ref"`
+	File       string  `json:"file"`
+	Line       int32   `json:"line"`
+	Reason     string  `json:"reason"`
+	Confidence float32 `json:"confidence"`
+	Suggestion string  `json:"suggestion"`
+	Source     string  `json:"source"`
+}
+
+type securityFinding struct {
+	RuleID   string `json:"rule_id"`
+	File     string `json:"file"`
+	Line     int32  `json:"line"`
+	Message  string `json:"message"`
+	Severity string `json:"severity"`
+	CWE      string `json:"cwe"`
+	Snippet  string `json:"snippet"`
+	Source   string `json:"source"`
+}
+
+type complianceFinding struct {
+	RuleID      string `json:"rule_id"`
+	Pack        string `json:"pack"`
+	File        string `json:"file"`
+	Line        int32  `json:"line"`
+	Message     string `json:"message"`
+	Control     string `json:"control"`
+	Severity    string `json:"severity"`
+	Remediation string `json:"remediation"`
+}
+
+type hallucinationFindings struct {
+	Score    float32           `json:"score"`
+	Findings []hallucinatedAPI `json:"findings"`
+	Model    string            `json:"model"`
+}
+
+type intentFindings struct {
+	Score       float32  `json:"score"`
+	CodeSummary string   `json:"code_summary"`
+	Mismatches  []string `json:"mismatches"`
+	Model       string   `json:"model"`
+}
+
+type securityFindings struct {
+	Score    float32           `json:"score"`
+	Findings []securityFinding `json:"findings"`
+	Model    string            `json:"model"`
+}
+
+type complianceFindings struct {
+	Score    float32             `json:"score"`
+	Findings []complianceFinding `json:"findings"`
+}
+
+type evalDetailFindings struct {
+	Hallucination *hallucinationFindings `json:"hallucination,omitempty"`
+	Intent        *intentFindings        `json:"intent,omitempty"`
+	Security      *securityFindings      `json:"security,omitempty"`
+	Compliance    *complianceFindings    `json:"compliance,omitempty"`
+}
+
+type evalDetail struct {
+	ID       string              `json:"id"`
+	Score    int32               `json:"score"`
+	Grade    string              `json:"grade"`
+	Findings *evalDetailFindings `json:"findings,omitempty"`
+}
+
 // readRunlitYml reads .runlit.yml from the current working directory.
 // Returns an empty string silently if the file doesn't exist.
 func readRunlitYml() string {
@@ -222,10 +306,41 @@ func callEvalAPI(baseURL, key, diff, title, desc, repo string, prNumber int64, r
 	return &result, nil
 }
 
-func printEvalResult(r *evalResponse) {
+func fetchEvalDetail(baseURL, key, evalID string) (*evalDetail, error) {
+	req, err := http.NewRequest(http.MethodGet, strings.TrimRight(baseURL, "/")+"/v1/evals/"+evalID, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+key)
+
+	client := &http.Client{Timeout: 15 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("API returned %d: %s", resp.StatusCode, string(body))
+	}
+
+	var detail evalDetail
+	if err := json.Unmarshal(body, &detail); err != nil {
+		return nil, fmt.Errorf("parse response: %w", err)
+	}
+	return &detail, nil
+}
+
+func printEvalResult(r *evalResponse, detail *evalDetail) {
 	if outputFormat == "json" {
-		out, _ := json.MarshalIndent(r, "", "  ")
-		fmt.Println(string(out))
+		if detail != nil {
+			out, _ := json.MarshalIndent(detail, "", "  ")
+			fmt.Println(string(out))
+		} else {
+			out, _ := json.MarshalIndent(r, "", "  ")
+			fmt.Println(string(out))
+		}
 		return
 	}
 
@@ -242,9 +357,70 @@ func printEvalResult(r *evalResponse) {
 	fmt.Printf("%-15s %-6.2f %s\n", "Hallucination", r.Hallucination.Score, r.Hallucination.Model)
 	fmt.Printf("%-15s %-6.2f %s\n", "Intent", r.Intent.Score, r.Intent.Model)
 	fmt.Printf("%-15s %-6.2f %s\n", "Security", r.Security.Score, r.Security.Model)
-	fmt.Printf("%-15s %-6.2f\n", "Compliance", r.Compliance.Score)
+	fmt.Printf("%-15s %-6.2f %s\n", "Compliance", r.Compliance.Score, r.Compliance.Model)
+
+	// Detailed findings (if --verbose was used)
+	if detail != nil && detail.Findings != nil {
+		f := detail.Findings
+		if h := f.Hallucination; h != nil && len(h.Findings) > 0 {
+			fmt.Printf("\n  🔍 Hallucinated APIs (%d):\n", len(h.Findings))
+			for _, finding := range h.Findings {
+				loc := ""
+				if finding.File != "" {
+					loc = fmt.Sprintf("%s:%d", finding.File, finding.Line)
+				}
+				fmt.Printf("    • %s — %s", finding.APIRef, finding.Reason)
+				if finding.Suggestion != "" {
+					fmt.Printf(" → use: %s", finding.Suggestion)
+				}
+				if loc != "" {
+					fmt.Printf("  (%s)", loc)
+				}
+				fmt.Println()
+			}
+		}
+		if s := f.Security; s != nil && len(s.Findings) > 0 {
+			fmt.Printf("\n  🛡️  Security issues (%d):\n", len(s.Findings))
+			for _, finding := range s.Findings {
+				loc := ""
+				if finding.File != "" {
+					loc = fmt.Sprintf("%s:%d", finding.File, finding.Line)
+				}
+				fmt.Printf("    • [%s] %s", finding.Severity, finding.Message)
+				if finding.CWE != "" {
+					fmt.Printf(" (%s)", finding.CWE)
+				}
+				if loc != "" {
+					fmt.Printf("  (%s)", loc)
+				}
+				fmt.Println()
+			}
+		}
+		if c := f.Compliance; c != nil && len(c.Findings) > 0 {
+			fmt.Printf("\n  📋 Compliance violations (%d):\n", len(c.Findings))
+			for _, finding := range c.Findings {
+				loc := ""
+				if finding.File != "" {
+					loc = fmt.Sprintf("%s:%d", finding.File, finding.Line)
+				}
+				fmt.Printf("    • [%s] %s %s: %s", finding.Severity, finding.Pack, finding.Control, finding.Message)
+				if loc != "" {
+					fmt.Printf("  (%s)", loc)
+				}
+				fmt.Println()
+			}
+		}
+		if i := f.Intent; i != nil && len(i.Mismatches) > 0 {
+			fmt.Printf("\n  ⚡ Intent mismatches (%d):\n", len(i.Mismatches))
+			for _, m := range i.Mismatches {
+				fmt.Printf("    • %s\n", m)
+			}
+		}
+	}
+
 	fmt.Printf("\nEval ID: %s\n", r.EvalID)
 	fmt.Printf("Latency: %dms\n", r.LatencyMs)
+	fmt.Printf("Details: https://app.runlit.dev/evals/%s\n", r.EvalID)
 }
 
 func gradeExitCode(grade string) error {

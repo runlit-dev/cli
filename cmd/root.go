@@ -16,17 +16,20 @@ var (
 
 var rootCmd = &cobra.Command{
 	Use:   "runlit",
-	Short: "AI code eval — catch hallucinated APIs, intent drift, and security issues in PRs",
+	Short: "AI code eval — catch hallucinated APIs, intent drift, security issues, and compliance violations in PRs",
 	Long: `runlit evaluates AI-generated code diffs for:
   - Hallucinated APIs (methods that don't exist in the library)
   - Intent mismatch (code doesn't match what the PR claims to do)
   - Security vulnerabilities (hardcoded secrets, injection, etc.)
   - Compliance violations (PCI-DSS, HIPAA, SOC2)
 
+Use --verbose on eval/check commands to see detailed findings.
+
 Examples:
   runlit check --pr 42 --repo myorg/myrepo
-  runlit eval --diff patch.diff --title "Add Stripe payment"
-  runlit eval --diff - < patch.diff`,
+  runlit eval --diff patch.diff --title "Add Stripe payment" --verbose
+  runlit eval --diff - < patch.diff
+  runlit status`,
 }
 
 func Execute() {

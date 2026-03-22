@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"time"
 
 	"github.com/spf13/cobra"
 )
@@ -15,10 +16,12 @@ var evalCmd = &cobra.Command{
 	Long: `Reads a unified diff and runs a full runlit eval.
 
 Use '-' as the diff file to read from stdin.
+Use --verbose to see detailed findings (hallucinated APIs, security issues, etc.).
 
 Examples:
   runlit eval --diff patch.diff
   runlit eval --diff patch.diff --title "Add Stripe checkout" --repo myorg/myrepo --pr 12
+  runlit eval --diff patch.diff --verbose
   git diff HEAD~1 | runlit eval --diff -`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		diffFile, _ := cmd.Flags().GetString("diff")
@@ -30,6 +33,7 @@ Examples:
 		desc, _ := cmd.Flags().GetString("description")
 		repo, _ := cmd.Flags().GetString("repo")
 		prNumber, _ := cmd.Flags().GetInt64("pr")
+		verbose, _ := cmd.Flags().GetBool("verbose")
 
 		key := apiKey
 		if key == "" {
@@ -60,7 +64,14 @@ Examples:
 			return fmt.Errorf("eval: %w", err)
 		}
 
-		printEvalResult(result)
+		var detail *evalDetail
+		if verbose {
+			fmt.Fprintln(os.Stderr, "Fetching findings...")
+			time.Sleep(800 * time.Millisecond) // Wait for async DB write
+			detail, _ = fetchEvalDetail(apiURL, key, result.EvalID)
+		}
+
+		printEvalResult(result, detail)
 		return gradeExitCode(result.Grade)
 	},
 }
@@ -71,5 +82,6 @@ func init() {
 	evalCmd.Flags().String("description", "", "PR description (improves intent signal accuracy)")
 	evalCmd.Flags().String("repo", "", "Repository full name e.g. myorg/myrepo")
 	evalCmd.Flags().Int64("pr", 0, "Pull request number")
+	evalCmd.Flags().BoolP("verbose", "v", false, "Show detailed findings (hallucinated APIs, security issues, etc.)")
 	rootCmd.AddCommand(evalCmd)
 }
